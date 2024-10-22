@@ -14,6 +14,16 @@ import os
 import glob
 import random
 
+class ContrastiveTransformations(object):
+
+    def __init__(self, base_transforms, n_views=2):
+        self.base_transforms = base_transforms
+        self.n_views = n_views
+
+    def __call__(self, x):
+        return [self.base_transforms(x) for _ in range(self.n_views)]
+
+
 class ImageMaskDataset(Dataset):
     def __init__(
         self, 
@@ -196,21 +206,9 @@ class ImageMaskDataset(Dataset):
         labeled_indices = [idx for idx in range(len(self.image_files)) 
                            if idx in self.labeled_set and self.mask_files[idx] is not None]
         return Subset(self, labeled_indices)
-
     
-class ContrastiveTransformations(object):
-
-    def __init__(self, base_transforms, n_views=2):
-        self.base_transforms = base_transforms
-        self.n_views = n_views
-
-    def __call__(self, x):
-        return [self.base_transforms(x) for _ in range(self.n_views)]
-
-if __name__ == '__main__':
+def get_datasets():
     
-    try:
-
         # Define image and mask directories
         image_dirs = [os.path.abspath('data'+'/'+x+'/'+x) for x in os.listdir('data/') if not x.endswith('.txt') and not x.endswith('.m')]
         
@@ -272,20 +270,15 @@ if __name__ == '__main__':
 
         labeled_dataloader = DataLoader(labeled_dataset, batch_size=batch_size, shuffle=True)#, num_workers=num_workers)
         unlabeled_dataloader = DataLoader(unlabeled_dataset, batch_size=batch_size, shuffle=True)#, num_workers=num_workers)
+        
+        return labeled_dataloader, unlabeled_dataloader
+    
 
-        # Iterate through the DataLoader
-        for batch in labeled_dataloader:
-            images = batch['image']  # Shape: (batch_size, 3, 256, 256)
-            masks = batch['mask']    # Shape: (batch_size, 1, 256, 256)
-            contrastive_images = batch.get('contrastive_image', None)  # Shape: (batch_size, n_views, 3, 256, 256)
+if __name__ == '__main__':
+    
+    try:
 
-            print(f"Images shape: {images.shape}")  # Expected: torch.Size([16, 3, 256, 256])
-            print(f"Masks shape: {masks.shape}")    # Expected: torch.Size([16, 1, 256, 256])
-            if contrastive_images is not None:
-                print(f"Contrastive Images shape: {contrastive_images.shape}")  # Expected: torch.Size([16, 2, 3, 256, 256])
-
-            # Add your processing or training code here
-            break  # Remove this to iterate through the entire dataset
+        labeled_dataloader, unlabeled_dataloader = get_datasets()
         
         
     except Exception as e:
