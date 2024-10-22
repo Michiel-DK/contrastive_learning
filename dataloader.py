@@ -53,31 +53,48 @@ class ImageMaskDataset(Dataset):
         self.image_files = []
         self.mask_files = []
 
-        # Collect image and mask file paths
+        # Collect image and mask file paths, include only images with masks
         for img_dir, msk_dir in zip(self.image_dirs, self.mask_dirs):
+            # List all image files in the image directory
             imgs = glob.glob(os.path.join(img_dir, '*.jpg')) + \
                    glob.glob(os.path.join(img_dir, '*.jpeg')) + \
                    glob.glob(os.path.join(img_dir, '*.png'))
-            self.image_files.extend(imgs)
+            print(f"Processing Image Directory: {img_dir}")
+            print(f"Number of Images Found: {len(imgs)}")
 
-            if msk_dir is not None:
+            if msk_dir is not None and os.path.exists(msk_dir):
+                # List all mask files in the mask directory
                 masks = glob.glob(os.path.join(msk_dir, '*.jpg')) + \
                         glob.glob(os.path.join(msk_dir, '*.jpeg')) + \
                         glob.glob(os.path.join(msk_dir, '*.png'))
-                # Create a mapping from filename to mask path for quick lookup
-                mask_dict = {os.path.basename(m): m for m in masks}
+                print(f"Processing Mask Directory: {msk_dir}")
+                print(f"Number of Masks Found: {len(masks)}")
+
+                # Create a mapping from image stem to mask path
+                mask_dict = {os.path.splitext(os.path.basename(m))[0]: m for m in masks}
+
+                # Iterate over each image and find its corresponding mask
                 for img_path in imgs:
-                    img_name = os.path.basename(img_path)
+                    img_name = os.path.splitext(os.path.basename(img_path))[0]
                     mask_path = mask_dict.get(img_name, None)
                     if mask_path:
+                        self.image_files.append(img_path)
                         self.mask_files.append(mask_path)
                     else:
-                        self.mask_files.append(None)
+                        # Image without corresponding mask is skipped
+                        print(f"Skipping Image (No Mask Found): {img_path}")
+                        continue
             else:
-                # If no mask directories provided, all masks are None
-                self.mask_files.extend([None] * len(imgs))
+                # If mask directory doesn't exist, skip adding images without masks
+                print(f"Mask Directory Not Found or Not Provided for Image Directory: {img_dir}")
+                print("Skipping all images in this directory.")
+                continue
 
-        assert len(self.image_files) == len(self.mask_files), "Number of images and masks must match."
+        print(f"Total Images with Masks: {len(self.image_files)}")
+        print(f"Total Masks: {len(self.mask_files)}")
+
+        assert len(self.image_files) == len(self.mask_files), \
+            f"Number of images ({len(self.image_files)}) and masks ({len(self.mask_files)}) must match."
 
         # Set random seed for reproducibility
         random.seed(self.seed)
@@ -86,15 +103,8 @@ class ImageMaskDataset(Dataset):
         random.shuffle(self.indices)
 
         # Determine number of labeled samples
-        if self.label_fraction < 1.0 and any(self.mask_files):
-            labeled_count = int(len(self.image_files) * self.label_fraction)
-            # Ensure that we only count images that have masks
-            labeled_indices = [idx for idx in self.indices if self.mask_files[idx] is not None]
-            labeled_indices = labeled_indices[:labeled_count]
-            self.labeled_set = set(labeled_indices)
-        else:
-            # All data is labeled
-            self.labeled_set = set(idx for idx in self.indices if self.mask_files[idx] is not None)
+        labeled_count = int(len(self.image_files) * self.label_fraction)
+        self.labeled_set = set(self.indices[:labeled_count])
 
     def __len__(self):
         return len(self.image_files)
@@ -102,50 +112,48 @@ class ImageMaskDataset(Dataset):
     def __getitem__(self, idx):
         actual_idx = self.indices[idx]
         img_path = self.image_files[actual_idx]
+        mask_path = self.mask_files[actual_idx]
+
+        # Load image and mask
         image = Image.open(img_path).convert('RGB')
-
-        # Check if this sample is labeled
-        is_labeled = actual_idx in self.labeled_set and self.mask_files[actual_idx] is not None
-
-        if is_labeled:
-            mask_path = self.mask_files[actual_idx]
-            mask = Image.open(mask_path).convert('L')  # Grayscale
-        else:
-            mask = None
+        mask = Image.open(mask_path).convert('L')  # Grayscale
 
         # Apply transforms to image
         if self.transform:
             image = self.transform(image)
 
         # Apply transforms to mask if present
-        if mask is not None and self.mask_transform:
+        if self.mask_transform:
             mask = self.mask_transform(mask)
 
         # Apply the mask to the image if required and if mask is present
         if self.apply_mask and mask is not None:
             image = self.apply_mask_to_image(image, mask)
 
+        # Determine if the sample is labeled
+        is_labeled = actual_idx in self.labeled_set
+
         # Initialize contrastive_image as None
         contrastive_image = None
 
         # Apply contrastive transform if provided
         if self.contrastive_transform:
-            # Since contrastive_transform returns a list of transformed images
+            # Convert tensor back to PIL Image for contrastive transformations
             image_pil = transforms.ToPILImage()(image)
-            contrastive_images = self.contrastive_transform(image_pil)
+            contrastive_images = self.contrastive_transform(image_pil)  # List of tensors
             contrastive_image = torch.stack(contrastive_images)  # Shape: (n_views, C, H, W)
 
         # Prepare the return dictionary
         sample = {
-            'image': image.unsqueeze(0),
-            'mask': mask if is_labeled else None
+            'image': image,
+            'mask': mask,
+            'is_labeled': torch.tensor(is_labeled, dtype=torch.float32)  # 1.0 for labeled, 0.0 for unlabeled
         }
 
         if self.contrastive_transform:
             sample['contrastive_image'] = contrastive_image
-            
-        #import ipdb;ipdb.set_trace()
 
+        return sample
         return sample
 
     def apply_mask_to_image(self, image, mask):
@@ -169,7 +177,7 @@ class ImageMaskDataset(Dataset):
         # Apply the mask
         masked_image = image * mask
         
-        #import ipdb;ipdb.set_trace()
+       # import ipdb;ipdb.set_trace()
 
         return masked_image
 
@@ -205,8 +213,13 @@ if __name__ == '__main__':
 
         # Define image and mask directories
         image_dirs = [os.path.abspath('data'+'/'+x+'/'+x) for x in os.listdir('data/') if not x.endswith('.txt') and not x.endswith('.m')]
+        
+        # correct for NA directory
+        image_dirs = [path for path in image_dirs if 'NA_Fish_Dataset' not in path]
 
         mask_dirs = [os.path.abspath('data'+'/'+x+'/'+x +' GT') for x in os.listdir('data/') if not x.endswith('.txt') and not x.endswith('.m')]
+        
+        mask_dirs = [path for path in mask_dirs if 'NA_Fish_Dataset' not in path]
 
         # Example transformations (ensure they convert images/masks to tensors correctly)
         image_transform = transforms.Compose([
@@ -247,7 +260,7 @@ if __name__ == '__main__':
         )
             
             # Create DataLoaders
-        batch_size = 8
+        batch_size = 16
         num_workers = 4
 
         # DataLoader for the entire dataset
