@@ -62,9 +62,15 @@ class ImageMaskDataset(Dataset):
 
         self.image_files = []
         self.mask_files = []
+        self.labels = []
+
+        # 1. Extract class names and create a mapping to indices
+        self.class_names = sorted([os.path.basename(os.path.normpath(dir)) for dir in self.image_dirs])
+        self.class_to_idx = {class_name: idx for idx, class_name in enumerate(self.class_names)}
+        print(f"Class to Index Mapping: {self.class_to_idx}")
 
         # Collect image and mask file paths, include only images with masks
-        for img_dir, msk_dir in zip(self.image_dirs, self.mask_dirs):
+        for img_dir, msk_dir, class_name in zip(self.image_dirs, self.mask_dirs, self.class_names):
             # List all image files in the image directory
             imgs = glob.glob(os.path.join(img_dir, '*.jpg')) + \
                    glob.glob(os.path.join(img_dir, '*.jpeg')) + \
@@ -90,6 +96,7 @@ class ImageMaskDataset(Dataset):
                     if mask_path:
                         self.image_files.append(img_path)
                         self.mask_files.append(mask_path)
+                        self.labels.append(self.class_to_idx[class_name])  # Assign class index
                     else:
                         # Image without corresponding mask is skipped
                         print(f"Skipping Image (No Mask Found): {img_path}")
@@ -123,6 +130,7 @@ class ImageMaskDataset(Dataset):
         actual_idx = self.indices[idx]
         img_path = self.image_files[actual_idx]
         mask_path = self.mask_files[actual_idx]
+        label = self.labels[actual_idx]
 
         # Load image and mask
         image = Image.open(img_path).convert('RGB')
@@ -157,6 +165,7 @@ class ImageMaskDataset(Dataset):
         sample = {
             'image': image,
             'mask': mask,
+            'label': torch.tensor(label, dtype=torch.long),  # Multiclass label
             'is_labeled': torch.tensor(is_labeled, dtype=torch.float32)  # 1.0 for labeled, 0.0 for unlabeled
         }
 
