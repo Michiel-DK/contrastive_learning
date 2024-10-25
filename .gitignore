@@ -2,3 +2,4 @@ data/
 .python-version
 __pycache__/
 path_to_dataset/
+lightning_logs/
