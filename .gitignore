@@ -3,3 +3,4 @@ data/
 __pycache__/
 path_to_dataset/
 lightning_logs/
+*.egg*/
