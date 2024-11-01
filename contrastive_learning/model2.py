@@ -13,13 +13,13 @@ from contrastive_learning.dataloader import *
 import wandb
 from pytorch_lightning.loggers import WandbLogger
 
-# Initialize WandbLogger
-WANDB_LOGGER = WandbLogger(
-    project='SimCLR_Project',     
-    name='SimCLR_Run',           
-    log_model='all',               # Log all models
-    save_dir='wandb_logs'
-)
+# # Initialize WandbLogger
+# WANDB_LOGGER = WandbLogger(
+#     project='SimCLR_Project',     
+#     name='SimCLR_Run',           
+#     log_model='all',               # Log all models
+#     save_dir='wandb_logs'
+# )
 
 class SimCLR(pl.LightningModule):
     """
@@ -72,56 +72,93 @@ class SimCLR(pl.LightningModule):
                                                             eta_min=self.hparams.lr/50)
         return [optimizer], [lr_scheduler]
 
+    # def info_nce_loss(self, batch, mode='train'):
+    #     """
+    #     Computes the InfoNCE loss for a batch of images.
+
+    #     Args:
+    #         batch (tuple): Tuple containing images and labels.
+    #         mode (str, optional): Mode of operation ('train' or 'val').
+
+    #     Returns:
+    #         Tensor: Computed InfoNCE loss.
+    #     """
+    #     contrastive_images, _ = batch  # contrastive_images shape: (batch_size, n_views, C, H, W)
+    #     batch_size, n_views, C, H, W = contrastive_images.shape
+    #     # Reshape to (batch_size * n_views, C, H, W)
+    #     imgs = contrastive_images.view(batch_size * n_views, C, H, W) #shape [batch_size, 3, 96, 96]
+
+    #     # Encode all images
+    #     feats = self.convnet(imgs)  # feats shape: (batch_size * n_views, hidden_dim)
+
+    #     # Normalize features
+    #     feats = F.normalize(feats, dim=1) # feats shape: (batch_size * n_views, hidden_dim)
+
+    #     # Compute cosine similarity matrix
+    #     cos_sim = torch.matmul(feats, feats.T)  # shape: (2*batch_size, 2*batch_size)
+
+    #     # Mask to exclude self-similarity
+    #     mask = torch.eye(cos_sim.size(0), dtype=torch.bool, device=self.device) # shape: (2*batch_size, 2*batch_size)
+    #     cos_sim.masked_fill_(mask, -9e15)
+
+    #     # Compute positive mask
+    #     # Assuming first n_views are from one augmentation and the next n_views from another
+    #     # Adjust based on your data batching strategy
+    #     pos_mask = torch.eye(batch_size, dtype=torch.bool, device=self.device)
+    #     pos_mask = torch.cat([pos_mask, pos_mask], dim=0)
+    #     pos_mask = pos_mask.repeat(1, n_views).view(-1, pos_mask.size(1)*n_views) # shape: (2*batch_size, 2*batch_size)
+
+    #     # Extract positive similarities
+    #     pos_sim = cos_sim[pos_mask].view(batch_size * n_views, -1)
+
+    #     # Compute loss
+    #     loss = -torch.log(torch.exp(pos_sim / self.hparams.temperature) / torch.sum(torch.exp(cos_sim / self.hparams.temperature), dim=1))
+    #     loss = loss.mean()
+
+    #     # Logging loss
+    #     self.log(f'{mode}_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+
+    #     # Get ranking position of positive example
+    #     # Not implemented here as it's more involved; can be added based on specific needs
+
+    #     return loss
+    
     def info_nce_loss(self, batch, mode='train'):
-        """
-        Computes the InfoNCE loss for a batch of images.
+        contrastive_images, _ = batch
 
-        Args:
-            batch (tuple): Tuple containing images and labels.
-            mode (str, optional): Mode of operation ('train' or 'val').
-
-        Returns:
-            Tensor: Computed InfoNCE loss.
-        """
         contrastive_images, _ = batch  # contrastive_images shape: (batch_size, n_views, C, H, W)
         batch_size, n_views, C, H, W = contrastive_images.shape
         # Reshape to (batch_size * n_views, C, H, W)
-        imgs = contrastive_images.view(batch_size * n_views, C, H, W)
+        imgs = contrastive_images.view(batch_size * n_views, C, H, W) #shape [batch_size, 3, 96, 96]
 
         # Encode all images
-        feats = self.convnet(imgs)  # feats shape: (batch_size * n_views, hidden_dim)
-
-        # Normalize features
-        feats = F.normalize(feats, dim=1)
-
-        # Compute cosine similarity matrix
-        cos_sim = torch.matmul(feats, feats.T)  # shape: (2*batch_size, 2*batch_size)
-
-        # Mask to exclude self-similarity
-        mask = torch.eye(cos_sim.size(0), dtype=torch.bool, device=self.device)
-        cos_sim.masked_fill_(mask, -9e15)
-
-        # Compute positive mask
-        # Assuming first n_views are from one augmentation and the next n_views from another
-        # Adjust based on your data batching strategy
-        pos_mask = torch.eye(batch_size, dtype=torch.bool, device=self.device)
-        pos_mask = torch.cat([pos_mask, pos_mask], dim=0)
-        pos_mask = pos_mask.repeat(1, n_views).view(-1, pos_mask.size(1)*n_views)
-
-        # Extract positive similarities
-        pos_sim = cos_sim[pos_mask].view(batch_size * n_views, -1)
-
-        # Compute loss
-        loss = -torch.log(torch.exp(pos_sim / self.hparams.temperature) / torch.sum(torch.exp(cos_sim / self.hparams.temperature), dim=1))
-        loss = loss.mean()
+        feats = self.convnet(imgs)
+        # Calculate cosine similarity
+        cos_sim = F.cosine_similarity(feats[:,None,:], feats[None,:,:], dim=-1)
+        # Mask out cosine similarity to itself
+        self_mask = torch.eye(cos_sim.shape[0], dtype=torch.bool, device=cos_sim.device)
+        cos_sim.masked_fill_(self_mask, -9e15)
+        # Find positive example -> batch_size//2 away from the original example
+        pos_mask = self_mask.roll(shifts=cos_sim.shape[0]//2, dims=0)
+        # InfoNCE loss
+        cos_sim = cos_sim / self.hparams.temperature
+        nll = -cos_sim[pos_mask] + torch.logsumexp(cos_sim, dim=-1)
+        nll = nll.mean()
 
         # Logging loss
-        self.log(f'{mode}_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-
+        self.log(mode+'_loss', nll)
         # Get ranking position of positive example
-        # Not implemented here as it's more involved; can be added based on specific needs
+        comb_sim = torch.cat([cos_sim[pos_mask][:,None],  # First position positive example
+                              cos_sim.masked_fill(pos_mask, -9e15)],
+                             dim=-1)
+        sim_argsort = comb_sim.argsort(dim=-1, descending=True).argmin(dim=-1)
+        import ipdb;ipdb.set_trace()
+        # Logging ranking metrics
+        self.log(mode+'_acc_top1', (sim_argsort == 0).float().mean())
+        self.log(mode+'_acc_top5', (sim_argsort < 5).float().mean())
+        self.log(mode+'_acc_mean_pos', 1+sim_argsort.float().mean())
 
-        return loss
+        return nll
 
     def training_step(self, batch, batch_idx):
         """
@@ -167,12 +204,12 @@ def train_simclr(batch_size, max_epochs=500, unlabeled_dataloader=None, labeled_
     device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
     
     # Initialize WandbLogger
-    WANDB_LOGGER = WandbLogger(
-        project='SimCLR_Project',     
-        name='SimCLR_Run',           
-        log_model='all',               # Log all models
-        save_dir='wandb_logs'
-    )
+    # WANDB_LOGGER = WandbLogger(
+    #     project='SimCLR_Project',     
+    #     name='SimCLR_Run',           
+    #     log_model='all',               # Log all models
+    #     save_dir='wandb_logs'
+    # )
     
     trainer = pl.Trainer(
         default_root_dir=os.path.join(CHECKPOINT_PATH, 'SimCLR'),
@@ -183,7 +220,7 @@ def train_simclr(batch_size, max_epochs=500, unlabeled_dataloader=None, labeled_
             ModelCheckpoint(save_weights_only=True, mode='min', monitor='train_loss'),
             LearningRateMonitor('epoch')
         ],
-        logger=[pl.loggers.TensorBoardLogger('lightning_logs', name='SimCLR'), WANDB_LOGGER],
+        logger=pl.loggers.TensorBoardLogger('lightning_logs', name='SimCLR'),#, WANDB_LOGGER],
         log_every_n_steps=10,  # Adjust as needed
     )
     
@@ -219,21 +256,31 @@ def train_simclr(batch_size, max_epochs=500, unlabeled_dataloader=None, labeled_
 
 
 if __name__ == '__main__':
-    # Define batch size and number of workers
-    batch_size = 16
-    NUM_WORKERS = 4  # Adjust based on your system's capabilities
+    
+    try:
 
-    # Get DataLoaders
-    labeled_dataloader, unlabeled_dataloader = get_datasets(batch_size=batch_size)
+            # Define batch size and number of workers
+        batch_size = 16
+        NUM_WORKERS = 4  # Adjust based on your system's capabilities
 
-    # Initialize and train the SimCLR model
-    simclr_model = train_simclr(
-        batch_size=batch_size,
-        hidden_dim=128,
-        lr=5e-4,
-        temperature=0.07,
-        weight_decay=1e-4,
-        max_epochs=30,
-        unlabeled_dataloader=unlabeled_dataloader,
-        labeled_dataloader=labeled_dataloader,
-    )
+        # Get DataLoaders
+        labeled_dataloader, unlabeled_dataloader = get_datasets(batch_size=batch_size)
+
+        # Initialize and train the SimCLR model
+        simclr_model = train_simclr(
+            batch_size=batch_size,
+            hidden_dim=128,
+            lr=5e-4,
+            temperature=0.07,
+            weight_decay=1e-4,
+            max_epochs=30,
+            unlabeled_dataloader=unlabeled_dataloader,
+            labeled_dataloader=labeled_dataloader,
+        )
+        
+        
+    except Exception as e:
+            import ipdb, traceback, sys
+            extype, value, tb = sys.exc_info()
+            traceback.print_exc()
+            ipdb.post_mortem(tb)

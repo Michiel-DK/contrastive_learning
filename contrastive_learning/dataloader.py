@@ -261,13 +261,13 @@ def get_datasets(batch_size=16):
 
     # Example transformations (ensure they convert images/masks to tensors correctly)
     image_transform = transforms.Compose([
-        transforms.Resize((256, 256)),
+        transforms.Resize((96, 96)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
 
     mask_transform = transforms.Compose([
-        transforms.Resize((256, 256)),
+        transforms.Resize((96, 96)),
         transforms.ToTensor()  # Convert mask to tensor directly
     ])
 
@@ -283,6 +283,7 @@ def get_datasets(batch_size=16):
             ], p=0.8),
             transforms.RandomGrayscale(p=0.2),
             transforms.GaussianBlur(kernel_size=9),
+           # transforms.Resize((96, 96)),
             transforms.ToTensor(),
             # transforms.Normalize((0.5,), (0.5,))
         ]),
