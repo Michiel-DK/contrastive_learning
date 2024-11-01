@@ -301,7 +301,7 @@ def get_datasets(batch_size=16):
     )
 
     # Determine labeled and unlabeled indices based on label_fraction
-    label_fraction = 0.7  # 70% labeled, 30% unlabeled
+    label_fraction = 0.3 # 70% labeled, 30% unlabeled
     total_size = len(full_labeled_dataset)
     labeled_size = int(total_size * label_fraction)
     unlabeled_size = total_size - labeled_size
@@ -338,10 +338,11 @@ def get_datasets(batch_size=16):
     labeled_dataloader = DataLoader(
         labeled_subset,
         batch_size=batch_size,
-        shuffle=True,  # Shuffle for training
+        shuffle=False,  # Shuffle for training
         num_workers=NUM_WORKERS,
         pin_memory=True,
-        drop_last=True
+        drop_last=True,
+        persistent_workers=True  # Keeps workers alive between epochs
     )
 
     # DataLoader for unlabeled data
@@ -351,7 +352,8 @@ def get_datasets(batch_size=16):
         shuffle=True,  # Shuffle for training
         num_workers=NUM_WORKERS,
         pin_memory=True,
-        drop_last=True
+        drop_last=True,
+        persistent_workers=True  # Keeps workers alive between epochs
     )
 
     return labeled_dataloader, unlabeled_dataloader

@@ -146,17 +146,17 @@ class SimCLR(pl.LightningModule):
         nll = nll.mean()
 
         # Logging loss
-        self.log(mode+'_loss', nll)
+        self.log(f'{mode}_loss', nll, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         # Get ranking position of positive example
         comb_sim = torch.cat([cos_sim[pos_mask][:,None],  # First position positive example
                               cos_sim.masked_fill(pos_mask, -9e15)],
                              dim=-1)
         sim_argsort = comb_sim.argsort(dim=-1, descending=True).argmin(dim=-1)
-        import ipdb;ipdb.set_trace()
         # Logging ranking metrics
         self.log(mode+'_acc_top1', (sim_argsort == 0).float().mean())
         self.log(mode+'_acc_top5', (sim_argsort < 5).float().mean())
         self.log(mode+'_acc_mean_pos', 1+sim_argsort.float().mean())
+        
 
         return nll
 
@@ -204,12 +204,12 @@ def train_simclr(batch_size, max_epochs=500, unlabeled_dataloader=None, labeled_
     device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
     
     # Initialize WandbLogger
-    # WANDB_LOGGER = WandbLogger(
-    #     project='SimCLR_Project',     
-    #     name='SimCLR_Run',           
-    #     log_model='all',               # Log all models
-    #     save_dir='wandb_logs'
-    # )
+    WANDB_LOGGER = WandbLogger(
+        project='SimCLR_Project',     
+        name='SimCLR_Run',           
+        log_model='all',               # Log all models
+        save_dir='wandb_logs'
+    )
     
     trainer = pl.Trainer(
         default_root_dir=os.path.join(CHECKPOINT_PATH, 'SimCLR'),
@@ -220,7 +220,7 @@ def train_simclr(batch_size, max_epochs=500, unlabeled_dataloader=None, labeled_
             ModelCheckpoint(save_weights_only=True, mode='min', monitor='train_loss'),
             LearningRateMonitor('epoch')
         ],
-        logger=pl.loggers.TensorBoardLogger('lightning_logs', name='SimCLR'),#, WANDB_LOGGER],
+        logger=[pl.loggers.TensorBoardLogger('lightning_logs', name='SimCLR'), WANDB_LOGGER],
         log_every_n_steps=10,  # Adjust as needed
     )
     
