@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import math
+
 
 def plot_combined_grid(images, contrastive_images, labels, rows=4, cols=4, figsize=(20, 20), normalize=True):
     """
@@ -77,6 +79,58 @@ def plot_combined_grid(images, contrastive_images, labels, rows=4, cols=4, figsi
             ax.imshow(concatenated)
             ax.set_title(f"{labels[i]}", fontsize=10)
             ax.axis('off')  # Hide axes for this subplot
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_contrastive_image_pairs(data, unnormalize=None):
+    """
+    Plots pairs of contrastive images side by side with labels as titles.
+
+    Parameters:
+    - data: list containing [images, labels]
+        - images: Tensor of shape [batch_size, 2, 3, 256, 256]
+        - labels: Tensor of shape [batch_size]
+    - unnormalize: function to unnormalize images if they were normalized
+    """
+    images, labels = data  # Unpack the data list
+
+    batch_size = images.size(0)
+    num_contrastive = images.size(1)  # Should be 2
+
+    # Determine grid size (e.g., 4x4 for batch_size=16)
+    grid_size = math.ceil(math.sqrt(batch_size))
+    fig, axes = plt.subplots(grid_size, grid_size, figsize=(4 * grid_size, 4 * grid_size))
+    axes = axes.flatten()  # Flatten in case of a grid larger than batch_size
+
+    for idx in range(batch_size):
+        ax = axes[idx]
+        pair = images[idx]  # Shape: [2, 3, 256, 256]
+        label = labels[idx].item() if isinstance(labels[idx], torch.Tensor) else labels[idx]
+
+        imgs = []
+        for i in range(num_contrastive):
+            img = pair[i]  # Shape: [3, 256, 256]
+            img = img.cpu().numpy()  # Convert to NumPy array
+            img = np.transpose(img, (1, 2, 0))  # Convert to HWC
+
+            if unnormalize:
+                img = unnormalize(img)
+
+            # Ensure the image is in the range [0, 1] for display
+            img = np.clip(img, 0, 1)
+
+            imgs.append(img)
+
+        # Concatenate images horizontally
+        combined_img = np.hstack(imgs)
+        ax.imshow(combined_img)
+        ax.axis('off')
+        ax.set_title(f'Label: {label}', fontsize=14)
+
+    # Remove any unused subplots
+    for idx in range(batch_size, len(axes)):
+        axes[idx].axis('off')
 
     plt.tight_layout()
     plt.show()

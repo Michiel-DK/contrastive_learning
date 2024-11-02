@@ -226,17 +226,14 @@ class ImageMaskDataset(VisionDataset):
 
         return masked_image
 
-from torch.utils.data import DataLoader, Subset
-from torchvision import transforms
-import os
-import random
 
-def get_datasets(batch_size=16):
+def get_datasets(batch_size=16, labeled_split=0.3):
     """
     Initializes and returns DataLoaders for labeled and unlabeled datasets.
 
     Args:
         batch_size (int, optional): Number of samples per batch.
+        labeled_split (float, optional): number of labeled instances in validation set
 
     Returns:
         tuple: (labeled_dataloader, unlabeled_dataloader)
@@ -301,7 +298,7 @@ def get_datasets(batch_size=16):
     )
 
     # Determine labeled and unlabeled indices based on label_fraction
-    label_fraction = 0.3 # 70% labeled, 30% unlabeled
+    label_fraction = labeled_split # 70% labeled, 30% unlabeled
     total_size = len(full_labeled_dataset)
     labeled_size = int(total_size * label_fraction)
     unlabeled_size = total_size - labeled_size
@@ -314,6 +311,8 @@ def get_datasets(batch_size=16):
     # Split indices
     labeled_indices = indices[:labeled_size]
     unlabeled_indices = indices[labeled_size:]
+    
+    print(f'Len labeled dataset {len(labeled_indices)} / len unlabeled dataset {len(unlabeled_indices)}')
 
     # Create Subsets
     labeled_subset = Subset(full_labeled_dataset, labeled_indices)
@@ -332,7 +331,7 @@ def get_datasets(batch_size=16):
     unlabeled_subset = Subset(full_unlabeled_dataset, unlabeled_indices)
 
     # Create DataLoaders
-    NUM_WORKERS = 4  # Adjust based on your system
+    NUM_WORKERS = 2  # Adjust based on your system
 
     # DataLoader for labeled data
     labeled_dataloader = DataLoader(

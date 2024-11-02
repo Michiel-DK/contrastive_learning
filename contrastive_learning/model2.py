@@ -67,6 +67,7 @@ class SimCLR(pl.LightningModule):
         optimizer = optim.AdamW(self.parameters(),
                                 lr=self.hparams.lr,
                                 weight_decay=self.hparams.weight_decay)
+        
         lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer,
                                                             T_max=self.hparams.max_epochs,
                                                             eta_min=self.hparams.lr/50)
@@ -171,7 +172,29 @@ class SimCLR(pl.LightningModule):
         Returns:
             Tensor: Computed loss.
         """
-        return self.info_nce_loss(batch, mode='train')
+        
+        try:
+            self.train() 
+        except Exception as e:
+            import ipdb;ipdb.set_trace()
+        
+        loss = self.info_nce_loss(batch, mode='train')
+        
+        # Compute gradient norms
+        total_norm = 0
+        for p in self.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+        total_norm = total_norm ** 0.5
+        
+        # Log gradient norm
+        self.log('train_grad_norm', total_norm, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        
+        lr = self.optimizers().param_groups[0]['lr']
+        self.log('train_lr', lr, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        
+        return loss
 
     def validation_step(self, batch, batch_idx):
         """
