@@ -68,9 +68,24 @@ class SimCLR(pl.LightningModule):
                                 lr=self.hparams.lr,
                                 weight_decay=self.hparams.weight_decay)
         
-        lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer,
-                                                            T_max=self.hparams.max_epochs,
-                                                            eta_min=self.hparams.lr/50)
+        # lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer,
+        #                                                     T_max=self.hparams.max_epochs,
+        #                                                     eta_min=self.hparams.lr/50)
+        
+        # Define ReduceLROnPlateau scheduler
+        lr_scheduler = {
+            'scheduler': lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode='min',          # Assuming you monitor 'train_loss' which you want to minimize
+                factor=0.1,          # Factor by which the learning rate will be reduced
+                patience=3,          # Number of epochs with no improvement after which learning rate will be reduced
+                verbose=True         # Enables logging
+            ),
+            'monitor': 'train_loss',  # Metric to monitor
+            'interval': 'epoch',      # Check at the end of each epoch
+            'frequency': 1,           # Check every epoch
+        }
+        
         return [optimizer], [lr_scheduler]
 
     # def info_nce_loss(self, batch, mode='train'):
