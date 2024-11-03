@@ -206,7 +206,7 @@ class ImageMaskDataset(VisionDataset):
             # Return image and label
             return image, torch.tensor(label, dtype=torch.long)
 
-    def apply_mask_to_image(self, image, mask):
+    def apply_mask_to_image(self, image, mask, padding=10, resize_size=(96, 96)):
         """
         Applies a binary mask to the image.
 
@@ -227,9 +227,43 @@ class ImageMaskDataset(VisionDataset):
         # Apply the mask
         masked_image = image * mask
         
-        
+        # Find the bounding box of the mask
+        # Convert mask to boolean for easier operations
+        mask_bool = mask[0].bool()  # Shape: (H, W)
 
-        return masked_image
+        # Check if the mask has any non-zero pixels
+        if not mask_bool.any():
+            print("Warning: Mask is empty. Returning the original masked image without cropping.")
+            return masked_image
+
+        # Get the coordinates of non-zero pixels
+        coords = mask_bool.nonzero(as_tuple=False)  # Shape: (N, 2), where N is number of non-zero pixels
+        y_min = torch.min(coords[:, 0]).item()
+        y_max = torch.max(coords[:, 0]).item()
+        x_min = torch.min(coords[:, 1]).item()
+        x_max = torch.max(coords[:, 1]).item()
+
+        # Add padding while ensuring the coordinates are within image boundaries
+        H, W = mask.shape[1], mask.shape[2]
+        y_min_padded = max(y_min - padding, 0)
+        y_max_padded = min(y_max + padding, H)
+        x_min_padded = max(x_min - padding, 0)
+        x_max_padded = min(x_max + padding, W)
+
+        # Crop the masked image
+        cropped_masked_image = masked_image[:, y_min_padded:y_max_padded, x_min_padded:x_max_padded]
+            
+        # Convert the cropped tensor to PIL Image for resizing
+        cropped_pil = transforms.ToPILImage()(cropped_masked_image)
+
+        # Resize the cropped image to the desired size
+        resized_pil = transforms.Resize(resize_size)(cropped_pil)
+
+        # Convert back to tensor
+        resized_image_tensor = transforms.ToTensor()(resized_pil)
+
+        return resized_image_tensor
+
 
 def get_datasets(batch_size=16, labeled_split=0.3, dataset_type='ImageMaskDataset', DATASET_PATH='path_to_dataset/'):
     """
