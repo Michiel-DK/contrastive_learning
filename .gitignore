@@ -4,3 +4,5 @@ __pycache__/
 path_to_dataset/
 lightning_logs/
 *.egg*/
+saved_models/
+NA_Fish_Dataset/
