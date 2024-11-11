@@ -2,6 +2,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import math
+from contrastive_learning.dataloader import *
+import torchvision.transforms.functional as TF
 
 
 def plot_combined_grid(images, contrastive_images, labels, rows=4, cols=4, figsize=(20, 20), normalize=True):
@@ -134,3 +136,95 @@ def plot_contrastive_image_pairs(data, unnormalize=None):
 
     plt.tight_layout()
     plt.show()
+    
+
+def visualize_image(image_tensor):
+    """
+    Visualizes an image tensor.
+
+    Args:
+        image_tensor (Tensor): Image tensor of shape (3, H, W).
+    """
+    image_pil = TF.to_pil_image(image_tensor)
+    plt.imshow(image_pil)
+    plt.axis('off')
+    plt.show()
+    
+import matplotlib.pyplot as plt
+import numpy as np
+
+def plot_train_val_batch_side_by_side(train_loader, val_loader, batch_size=8, unnormalize=None):
+    """
+    Plots a batch of images from both the train and validation loaders side by side.
+
+    Args:
+        train_loader (DataLoader): DataLoader for the training set.
+        val_loader (DataLoader): DataLoader for the validation set.
+        batch_size (int): Number of samples to display from each loader.
+        unnormalize (function, optional): Function to unnormalize images if necessary.
+    """
+    # Get one batch from both train and validation loaders
+    train_batch = next(iter(train_loader))
+    val_batch = next(iter(val_loader))
+
+    train_images, train_labels = train_batch
+    val_images, val_labels = val_batch
+
+    # Ensure the batch size does not exceed the available samples
+    batch_size = min(batch_size, len(train_images), len(val_images))
+
+    fig, axes = plt.subplots(batch_size, 2, figsize=(10, 5 * batch_size))
+    if batch_size == 1:
+        axes = [axes]  # Ensure axes is iterable if there's only one sample
+
+    for i in range(batch_size):
+        # Train image
+        train_img = train_images[i].permute(1, 2, 0).cpu().numpy()
+        val_img = val_images[i].permute(1, 2, 0).cpu().numpy()
+
+        # Unnormalize if necessary
+        if unnormalize:
+            train_img = unnormalize(train_img)
+            val_img = unnormalize(val_img)
+
+        # Clip images to [0, 1] range for display
+        train_img = np.clip(train_img, 0, 1)
+        val_img = np.clip(val_img, 0, 1)
+
+        # Plot train image
+        axes[i][0].imshow(train_img)
+        axes[i][0].set_title(f"Train Label: {train_labels[i].item()}")
+        axes[i][0].axis('off')
+
+        # Plot validation image
+        axes[i][1].imshow(val_img)
+        axes[i][1].set_title(f"Validation Label: {val_labels[i].item()}")
+        axes[i][1].axis('off')
+
+    plt.tight_layout()
+    plt.show()
+
+
+if __name__ == '__main__':
+    try:
+        # Initialize STL10 DataLoaders with a subset
+        stl_unlabeled_dataloader, stl_train_contrast_dataloader = get_datasets(
+            batch_size=16, 
+            dataset_type='imagemaskdataset', 
+            DATASET_PATH='data/',  # Specify where to download/load STL10 data
+            labeled_split=0.3  # Retain 30% of the train_data_contrast
+        )
+
+        # Get a single batch from the train_contrast DataLoader
+        for batch in stl_train_contrast_dataloader:
+            contrastive_images, _ = batch
+            # Select the first image in the batch (first view)
+            first_image = contrastive_images[0][0]  # Assuming n_views=2
+            visualize_image(first_image)
+            break  # Visualize only one image
+
+    except Exception as e:
+        import ipdb, traceback, sys
+        extype, value, tb = sys.exc_info()
+        traceback.print_exc()
+        ipdb.post_mortem(tb)

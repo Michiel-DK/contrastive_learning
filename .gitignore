@@ -6,3 +6,6 @@ lightning_logs/
 *.egg*/
 saved_models/
 NA_Fish_Dataset/
+data_tar/
+stl_data/
+.DS_Store

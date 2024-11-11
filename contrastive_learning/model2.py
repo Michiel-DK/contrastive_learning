@@ -12,17 +12,12 @@ from contrastive_learning.dataloader import *
 
 import torch.optim.lr_scheduler as lr_scheduler
 
+from torchsummary import summary
+
+
 
 import wandb
 from pytorch_lightning.loggers import WandbLogger
-
-# # Initialize WandbLogger
-# WANDB_LOGGER = WandbLogger(
-#     project='SimCLR_Project',     
-#     name='SimCLR_Run',           
-#     log_model='all',               # Log all models
-#     save_dir='wandb_logs'
-# )
 
 class SimCLR(pl.LightningModule):
     """
@@ -53,21 +48,14 @@ class SimCLR(pl.LightningModule):
         # Base model f(.)
         
             # Base model f(.)
-        self.convnet = torchvision.models.resnet18(pretrained=False, num_classes=9*hidden_dim)  # Output of last linear layer
+        #import ipdb;ipdb.set_trace()
+        self.convnet = torchvision.models.resnet50(pretrained=False, num_classes=4*hidden_dim)  # Output of last linear layer
         
-        # Replace the final fully connected layer with a projection head
-        # self.convnet.fc = nn.Sequential(
-        #     self.convnet.fc,
-        #     nn.BatchNorm1d(512),
-        #     nn.ReLU(inplace=True),
-        #     nn.Dropout(p=0.5),  # 50% dropout
-        #     nn.Linear(512, self.hparams.hidden_dim)
-        # )
         
         self.convnet.fc = nn.Sequential(
             self.convnet.fc,  # Linear(ResNet output, 4*hidden_dim)
             nn.ReLU(inplace=True),
-            nn.Linear(9*hidden_dim, hidden_dim)
+            nn.Linear(4*hidden_dim, hidden_dim)
         )
         
         # Initialize weights using Xavier initialization
@@ -76,14 +64,6 @@ class SimCLR(pl.LightningModule):
                 nn.init.xavier_uniform_(m.weight)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
-        
-        # self.convnet = torchvision.models.resnet18(num_classes=9*hidden_dim, pretrained=False)  # Output of last linear layer
-        # # The MLP for g(.) consists of Linear->ReLU->Linear
-        # self.convnet.fc = nn.Sequential(
-        #     self.convnet.fc,  # Linear(ResNet output, 4*hidden_dim)
-        #     nn.ReLU(inplace=True),
-        #     nn.Linear(9*hidden_dim, hidden_dim)
-        # )
 
     def configure_optimizers(self):
         """
@@ -97,10 +77,7 @@ class SimCLR(pl.LightningModule):
                                 lr=self.hparams.lr,
                                 weight_decay=self.hparams.weight_decay)
         
-        # lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer,
-        #                                                     T_max=self.hparams.max_epochs,
-        #                                                     eta_min=self.hparams.lr/50)
-        
+
         # Define ReduceLROnPlateau scheduler
         scheduler = {
             'scheduler': lr_scheduler.ReduceLROnPlateau(
@@ -117,68 +94,18 @@ class SimCLR(pl.LightningModule):
         
         return [optimizer], [scheduler]
 
-    # def info_nce_loss(self, batch, mode='train'):
-    #     """
-    #     Computes the InfoNCE loss for a batch of images.
-
-    #     Args:
-    #         batch (tuple): Tuple containing images and labels.
-    #         mode (str, optional): Mode of operation ('train' or 'val').
-
-    #     Returns:
-    #         Tensor: Computed InfoNCE loss.
-    #     """
-    #     contrastive_images, _ = batch  # contrastive_images shape: (batch_size, n_views, C, H, W)
-    #     batch_size, n_views, C, H, W = contrastive_images.shape
-    #     # Reshape to (batch_size * n_views, C, H, W)
-    #     imgs = contrastive_images.view(batch_size * n_views, C, H, W) #shape [batch_size, 3, 96, 96]
-
-    #     # Encode all images
-    #     feats = self.convnet(imgs)  # feats shape: (batch_size * n_views, hidden_dim)
-
-    #     # Normalize features
-    #     feats = F.normalize(feats, dim=1) # feats shape: (batch_size * n_views, hidden_dim)
-
-    #     # Compute cosine similarity matrix
-    #     cos_sim = torch.matmul(feats, feats.T)  # shape: (2*batch_size, 2*batch_size)
-
-    #     # Mask to exclude self-similarity
-    #     mask = torch.eye(cos_sim.size(0), dtype=torch.bool, device=self.device) # shape: (2*batch_size, 2*batch_size)
-    #     cos_sim.masked_fill_(mask, -9e15)
-
-    #     # Compute positive mask
-    #     # Assuming first n_views are from one augmentation and the next n_views from another
-    #     # Adjust based on your data batching strategy
-    #     pos_mask = torch.eye(batch_size, dtype=torch.bool, device=self.device)
-    #     pos_mask = torch.cat([pos_mask, pos_mask], dim=0)
-    #     pos_mask = pos_mask.repeat(1, n_views).view(-1, pos_mask.size(1)*n_views) # shape: (2*batch_size, 2*batch_size)
-
-    #     # Extract positive similarities
-    #     pos_sim = cos_sim[pos_mask].view(batch_size * n_views, -1)
-
-    #     # Compute loss
-    #     loss = -torch.log(torch.exp(pos_sim / self.hparams.temperature) / torch.sum(torch.exp(cos_sim / self.hparams.temperature), dim=1))
-    #     loss = loss.mean()
-
-    #     # Logging loss
-    #     self.log(f'{mode}_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-
-    #     # Get ranking position of positive example
-    #     # Not implemented here as it's more involved; can be added based on specific needs
-
-    #     return loss
     
     def info_nce_loss(self, batch, mode='train'):
 
         contrastive_images, _ = batch  # contrastive_images shape: (batch_size, n_views, C, H, W)
         
-        if 'stl10' in self.hparams.dataset_type:
-            imgs = torch.cat(contrastive_images, dim=0)
+        # if 'stl10' in self.hparams.dataset_type:
+        #     imgs = torch.cat(contrastive_images, dim=0)
         
-        else:
-            batch_size, n_views, C, H, W = contrastive_images.shape
+        batch_size, n_views, C, H, W = contrastive_images.shape
             # Reshape to (batch_size * n_views, C, H, W)
-            imgs = contrastive_images.view(batch_size * n_views, C, H, W) #shape [batch_size, 3, 96, 96]
+        imgs = contrastive_images.view(batch_size * n_views, C, H, W) #shape [batch_size, 3, 96, 96]
+        
 
         # Encode all images
         feats = self.convnet(imgs)
@@ -361,14 +288,14 @@ if __name__ == '__main__':
     try:
 
             # Define batch size and number of workers
-        batch_size = 32
+        batch_size = 256
         NUM_WORKERS = 2  # Adjust based on your system's capabilities
         
-        dataset_type = 'stl10' #'imagemaskdataset'
-        DATASET_PATH = 'path_to_dataset' #'data/'
+        dataset_type ='stl10'  #'stl10'  
+        DATASET_PATH = 'path_to_dataset'  #'data/' 
 
         # Get DataLoaders
-        labeled_dataloader, unlabeled_dataloader = get_datasets(batch_size=batch_size, labeled_split=0.2, dataset_type=dataset_type, DATASET_PATH=DATASET_PATH)
+        labeled_dataloader, unlabeled_dataloader = get_datasets(batch_size=batch_size, labeled_split=0.1, dataset_type=dataset_type, DATASET_PATH=DATASET_PATH)
 
         # Initialize and train the SimCLR model
         simclr_model = train_simclr(
@@ -380,7 +307,7 @@ if __name__ == '__main__':
             max_epochs=30,
             unlabeled_dataloader=unlabeled_dataloader,
             labeled_dataloader=labeled_dataloader,
-            dataset_type =dataset_type
+            dataset_type = dataset_type
         )
         
         
