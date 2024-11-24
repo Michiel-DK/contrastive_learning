@@ -8,13 +8,14 @@ from google.cloud import storage
 import io
 import random
 import shutil
-#from contrastive_learning.plotting import plot_train_val_batch_side_by_side
 
 class ImageMaskDataset(VisionDataset):
-    def __init__(self, bucket_name, train=True, split_percentage=0.8, seed=42, transform=None, image_size=224, tar_prefix='data_tar/fish_data.tar.gz', download=False):
+    def __init__(self, bucket_name, train=True, split_percentage=0.7, validation_split_percentage=0.2, unlabeled_split_percentage=0.5, seed=42, transform=None, unlabeled=False, test=False, image_size=224, tar_prefix='data_tar/fish_data.tar.gz', download=False):
         super(ImageMaskDataset, self).__init__(root='data/', transform=transform)
         
         self.train = train
+        self.unlabeled = unlabeled  # Flag for unlabeled set
+        self.test = test  # Flag for test set
         self.download = download
         self.tar_prefix = tar_prefix
         self.local_tar_path = os.path.join(self.root, 'fish_data.tar.gz')
@@ -38,13 +39,15 @@ class ImageMaskDataset(VisionDataset):
         
         # Create a class-to-index mapping
         self.class_to_idx = {class_name: idx for idx, class_name in enumerate(self.classes)}
-        print(f"Class to index mapping: {self.class_to_idx}")
+        #print(f"Class to index mapping: {self.class_to_idx}")
         
-        # Assign labels based on the directory name
-        self.labels = [self.class_to_idx[self._extract_class_name_from_path(path)] for path in self.image_paths]
+        # Assign labels or set to -1 if unlabeled
+        self.labels = [-1] * len(self.image_paths) if self.unlabeled else [
+            self.class_to_idx[self._extract_class_name_from_path(path)] for path in self.image_paths
+        ]
         
-        # Split data into train and validation sets
-        self._split_data(split_percentage, seed)
+        # Split data into unlabeled, train, validation, and test sets
+        self._split_data(split_percentage, validation_split_percentage, unlabeled_split_percentage, seed)
 
         # Define a default transform if none is provided
         self.transform = transform or transforms.Compose([
@@ -53,7 +56,6 @@ class ImageMaskDataset(VisionDataset):
         ])
     
     def _local_data_exists(self):
-        # Check if local data exists by verifying if the 'data/' directory has any images
         if not os.path.exists(self.root):
             return False
         for class_name in os.listdir(self.root):
@@ -63,80 +65,43 @@ class ImageMaskDataset(VisionDataset):
         return False
         
     def _download_and_extract_tar(self):
-        # Define the local tar path under 'data_tar/'
         self.local_tar_path = os.path.join('data_tar', 'fish_data.tar.gz')
         self.root = 'data_tar/'  # Set the root for extracted data
 
-        # Ensure the 'data_tar/' directory exists
         os.makedirs('data_tar', exist_ok=True)
 
-        # Check if the tar file already exists locally
         if os.path.exists(self.local_tar_path):
             print(f"Tar file already exists locally at {self.local_tar_path}. Skipping download.")
         else:
-            # Download the tar file from GCS
             print(f"Downloading {self.tar_prefix} from GCS to {self.local_tar_path}...")
             blob = self.bucket.blob(self.tar_prefix)
             blob.download_to_filename(self.local_tar_path)
             print(f"Downloaded {self.tar_prefix} to {self.local_tar_path}")
 
-        # Extract the tar file to the 'data_tar/' directory
         print(f"Extracting {self.local_tar_path}...")
         with tarfile.open(self.local_tar_path, 'r:gz') as tar:
             tar.extractall(path=self.root)
 
-        # Debug: Print the complete directory structure after extraction
-        print("Complete directory structure after extraction:")
-        for root, dirs, files in os.walk(self.root):
-            print(f"Directory: {root}")
-            print(f"Subdirectories: {dirs}")
-            print(f"Files: {files}")
-
-        # Handle nested directories (e.g., 'data_tar/Sea Bass/Sea Bass/')
-        for class_name in os.listdir(self.root):
-            class_dir = os.path.join(self.root, class_name)
-            if os.path.isdir(class_dir) and "GT" not in class_name:
-                nested_dirs = os.listdir(class_dir)
-                if len(nested_dirs) == 1 and os.path.isdir(os.path.join(class_dir, nested_dirs[0])):
-                    nested_dir = os.path.join(class_dir, nested_dirs[0])
-                    print(f"Detected nested directory: {nested_dir}. Moving contents to {class_dir}")
-                    # Move all files up one level
-                    for item in os.listdir(nested_dir):
-                        shutil.move(os.path.join(nested_dir, item), class_dir)
-                    # Remove the empty nested directory
-                    shutil.rmtree(nested_dir)
-
-        # Skip removing the tar file as requested
-        print(f"Tar file retained at {self.local_tar_path}")
-
-
     def _get_local_image_paths(self):
-        # Recursively collect all image file paths from 'data_tar/' directory, excluding "GT" directories
         local_image_paths = []
         print("Collecting image paths from the 'data_tar/' directory...")
         for root, dirs, files in os.walk(self.root):
-            # Skip "GT" directories
             if "GT" in root:
                 continue
 
-            # Only scan for images in directories that are not "GT"
             for file_name in files:
                 if file_name.endswith(('.jpg', '.jpeg', '.png')):
                     image_path = os.path.join(root, file_name)
                     local_image_paths.append(image_path)
-                    print(f"Found image: {image_path}")
+                    #print(f"Found image: {image_path}")
 
-        print(f"Found {len(local_image_paths)} images excluding GT directories.")
+       # print(f"Found {len(local_image_paths)} images excluding GT directories.")
         return local_image_paths
 
-
-    
     def _extract_class_name_from_path(self, path):
-        # Extracts class name from directory structure, assuming format "data/class_name/image.jpg"
         return os.path.basename(os.path.dirname(path))
 
-    def _split_data(self, split_percentage, seed):
-        # Shuffle and split indices based on the split percentage and seed
+    def _split_data(self, split_percentage, validation_split_percentage, unlabeled_split_percentage, seed):
         total_size = len(self.image_paths)
         if total_size == 0:
             raise ValueError("Dataset has no images. Check your local 'data/' directory.")
@@ -145,43 +110,88 @@ class ImageMaskDataset(VisionDataset):
         random.seed(seed)
         random.shuffle(indices)
         
-        split_idx = int(total_size * split_percentage)
+        unlabeled_size = int(total_size * unlabeled_split_percentage)
+        remaining_size = total_size - unlabeled_size
+        train_size = int(remaining_size * split_percentage)
+        validation_size = int(remaining_size * validation_split_percentage)
+        test_size = remaining_size - train_size - validation_size
+
+        self.unlabeled_indices = indices[:unlabeled_size]
+        remaining_indices = indices[unlabeled_size:]
+        self.train_indices = remaining_indices[:train_size]
+        self.val_indices = remaining_indices[train_size:train_size + validation_size]
+        self.test_indices = remaining_indices[train_size + validation_size:]
         
-        if self.train:
-            self.indices = indices[:split_idx]  # Training data
+        if self.unlabeled:
+            self.indices = self.unlabeled_indices
+            print(f"Unlabeled dataset with {len(self.indices)} samples.")
+        elif self.train:
+            self.indices = self.train_indices
+            print(f"Training dataset with {len(self.indices)} samples.")
+        elif self.test:
+            self.indices = self.test_indices
+            print(f"Test dataset with {len(self.indices)} samples.")
         else:
-            self.indices = indices[split_idx:]  # Validation/Test data
-        
-        print(f"{'Training' if self.train else 'Validation'} split has {len(self.indices)} samples.")
+            self.indices = self.val_indices
+            print(f"Validation dataset with {len(self.indices)} samples.")
 
     def __len__(self):
         return len(self.indices)
 
     def __getitem__(self, idx):
-        # Map idx to the correct subset index
         real_idx = self.indices[idx]
-        
-        # Retrieve image path and label
         img_path = self.image_paths[real_idx]
         label = self.labels[real_idx]
 
-        # Load image from local
         image = Image.open(img_path).convert('RGB')
-        
-        # Apply resizing transform
         if self.transform:
             image = self.transform(image)
 
         return image, label
 
 
-# Example usage:
-if __name__ == '__main__':
-    train_dataset = ImageMaskDataset(bucket_name="fish-dataset-cl", train=True, split_percentage=0.8, seed=42, image_size=96, tar_prefix='data_tar/fish_data.tar.gz', download=False)
-    val_dataset = ImageMaskDataset(bucket_name="fish-dataset-cl", train=False, split_percentage=0.8, seed=42, image_size=96, tar_prefix='data_tar/fish_data.tar.gz', download=False)
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=32, shuffle=False)
+if __name__ == "__main__":
+    transform = transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    ])
     
-    #plot_train_val_batch_side_by_side(train_loader, val_loader, batch_size=8)
+    bucket_name = "fish-dataset-cl"  # Replace with your bucket name
+
+    # Unlabeled dataset for pretraining
+    unlabeled_dataset = ImageMaskDataset(bucket_name, transform=transform, unlabeled=True, download=False)
+    unlabeled_loader = torch.utils.data.DataLoader(unlabeled_dataset, batch_size=64, shuffle=True)
+    #print(f"Unlabeled dataset size: {len(unlabeled_dataset)}")
+
+    # Train dataset for fine-tuning
+    train_dataset = ImageMaskDataset(bucket_name, train=True, transform=transform, unlabeled=False, download=False)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=32, shuffle=True)
+    #print(f"Train dataset size: {len(train_dataset)}")
+
+    # Validation dataset for fine-tuning
+    val_dataset = ImageMaskDataset(bucket_name, train=False, transform=transform, unlabeled=False, download=False)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=32, shuffle=False)
+    #print(f"Validation dataset size: {len(val_dataset)}")
+
+    # Test dataset for fine-tuning
+    test_dataset = ImageMaskDataset(bucket_name, train=False, transform=transform, unlabeled=False, test=True, download=False)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=False)
+    #print(f"Test dataset size: {len(test_dataset)}")
+
+    # Verify data loaders
+    for images, labels in unlabeled_loader:
+        print(f"Unlabeled batch - Images: {images.size()}, Labels: {labels.size()}")
+        break
+    for images, labels in train_loader:
+        print(f"Train batch - Images: {images.size()}, Labels: {labels.size()}")
+        break
+    for images, labels in val_loader:
+        print(f"Validation batch - Images: {images.size()}, Labels: {labels.size()}")
+        break
+    for images, labels in test_loader:
+        print(f"Test batch - Images: {images.size()}, Labels: {labels.size()}")
+        break
     
     import ipdb;ipdb.set_trace()
