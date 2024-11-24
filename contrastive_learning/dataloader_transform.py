@@ -8,9 +8,11 @@ from google.cloud import storage
 import io
 import random
 import shutil
+from contrastive_learning.transform import *
+
 
 class ImageMaskDataset(VisionDataset):
-    def __init__(self, bucket_name, train=True, split_percentage=0.7, validation_split_percentage=0.2, unlabeled_split_percentage=0.5, seed=42, transform=None, unlabeled=False, test=False, image_size=224, tar_prefix='data_tar/fish_data.tar.gz', download=False):
+    def __init__(self, bucket_name, train=True, split_percentage=0.7, validation_split_percentage=0.2, unlabeled_split_percentage=0.1, seed=42, transform=None, unlabeled=False, test=False, image_size=224, tar_prefix='data_tar/fish_data.tar.gz', download=False):
         super(ImageMaskDataset, self).__init__(root='data/', transform=transform)
         
         self.train = train
@@ -39,7 +41,7 @@ class ImageMaskDataset(VisionDataset):
         
         # Create a class-to-index mapping
         self.class_to_idx = {class_name: idx for idx, class_name in enumerate(self.classes)}
-        #print(f"Class to index mapping: {self.class_to_idx}")
+        print(f"Class to index mapping: {self.class_to_idx}")
         
         # Assign labels or set to -1 if unlabeled
         self.labels = [-1] * len(self.image_paths) if self.unlabeled else [
@@ -93,9 +95,9 @@ class ImageMaskDataset(VisionDataset):
                 if file_name.endswith(('.jpg', '.jpeg', '.png')):
                     image_path = os.path.join(root, file_name)
                     local_image_paths.append(image_path)
-                    #print(f"Found image: {image_path}")
+                    print(f"Found image: {image_path}")
 
-       # print(f"Found {len(local_image_paths)} images excluding GT directories.")
+        print(f"Found {len(local_image_paths)} images excluding GT directories.")
         return local_image_paths
 
     def _extract_class_name_from_path(self, path):
@@ -144,6 +146,9 @@ class ImageMaskDataset(VisionDataset):
         label = self.labels[real_idx]
 
         image = Image.open(img_path).convert('RGB')
+        if self.unlabeled and callable(self.transform):
+            image1, image2 = self.transform(image)
+            return (image1, image2), label
         if self.transform:
             image = self.transform(image)
 
@@ -151,47 +156,28 @@ class ImageMaskDataset(VisionDataset):
 
 
 if __name__ == "__main__":
-    transform = transforms.Compose([
-        transforms.RandomResizedCrop(224),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-    ])
+    size = 224
+    transform = TransformsSimCLR(size=size)
     
     bucket_name = "fish-dataset-cl"  # Replace with your bucket name
 
     # Unlabeled dataset for pretraining
     unlabeled_dataset = ImageMaskDataset(bucket_name, transform=transform, unlabeled=True, download=False)
-    unlabeled_loader = torch.utils.data.DataLoader(unlabeled_dataset, batch_size=64, shuffle=True)
-    #print(f"Unlabeled dataset size: {len(unlabeled_dataset)}")
+    unlabeled_loader = torch.utils.data.DataLoader(unlabeled_dataset, batch_size=32, shuffle=True)
+    print(f"Unlabeled dataset size: {len(unlabeled_dataset)}")
 
     # Train dataset for fine-tuning
-    train_dataset = ImageMaskDataset(bucket_name, train=True, transform=transform, unlabeled=False, download=False)
+    train_dataset = ImageMaskDataset(bucket_name, train=True, transform=transform.test_transform, unlabeled=False, download=False)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=32, shuffle=True)
-    #print(f"Train dataset size: {len(train_dataset)}")
+    print(f"Train dataset size: {len(train_dataset)}")
 
     # Validation dataset for fine-tuning
-    val_dataset = ImageMaskDataset(bucket_name, train=False, transform=transform, unlabeled=False, download=False)
+    val_dataset = ImageMaskDataset(bucket_name, train=False, transform=transform.test_transform, unlabeled=False, download=False)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=32, shuffle=False)
-    #print(f"Validation dataset size: {len(val_dataset)}")
+    print(f"Validation dataset size: {len(val_dataset)}")
 
     # Test dataset for fine-tuning
-    test_dataset = ImageMaskDataset(bucket_name, train=False, transform=transform, unlabeled=False, test=True, download=False)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=False)
-    #print(f"Test dataset size: {len(test_dataset)}")
-
-    # Verify data loaders
-    for images, labels in unlabeled_loader:
-        print(f"Unlabeled batch - Images: {images.size()}, Labels: {labels.size()}")
-        break
-    for images, labels in train_loader:
-        print(f"Train batch - Images: {images.size()}, Labels: {labels.size()}")
-        break
-    for images, labels in val_loader:
-        print(f"Validation batch - Images: {images.size()}, Labels: {labels.size()}")
-        break
-    for images, labels in test_loader:
-        print(f"Test batch - Images: {images.size()}, Labels: {labels.size()}")
-        break
+    test_dataset = ImageMaskDataset(bucket_name, train=False, transform=transform.test_transform, unlabeled=False, test=True, download=False)
+    test_loader = torch.utils.data.DataLoader
     
     import ipdb;ipdb.set_trace()
